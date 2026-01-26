@@ -1,0 +1,6 @@
+credentials.json
+token.pickle
+token.json
+.env
+.ipynb_checkpoints/
+__pycache__/
