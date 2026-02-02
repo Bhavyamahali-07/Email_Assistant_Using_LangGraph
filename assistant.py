@@ -45,36 +45,18 @@ def save_memory(memory):
 # ======================
 # GOOGLE LOGIN (STREAMLIT SAFE)
 # ======================
-import os
-import json
-import streamlit as st
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-
-SCOPES = [
-    "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/calendar"
-]
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TOKEN_PATH = os.path.join(BASE_DIR, "token.json")
-
-
 def google_login():
     creds = None
 
-    # 1️⃣ Load existing token
+    # Load existing token
     if os.path.exists(TOKEN_PATH):
         creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
 
-    # 2️⃣ If token invalid / not exists
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            # ✅ IMPORTANT: NO credentials.json FILE USED
+            # 🔐 Read OAuth config from Streamlit Secrets
             client_config = json.loads(
                 st.secrets["google"]["credentials"]
             )
@@ -83,9 +65,35 @@ def google_login():
                 client_config,
                 SCOPES
             )
-            creds = flow.run_local_server(port=0)
 
-        # 3️⃣ Save token
+            # ✅ CLOUD-SAFE: NO BROWSER REQUIRED
+            auth_url, _ = flow.authorization_url(
+                prompt="consent"
+            )
+
+            st.warning("🔐 Google Authorization Required")
+            st.markdown(
+                f"""
+                1. Open this URL in a **new browser tab**  
+                2. Login with Google  
+                3. Allow permissions  
+                4. Copy the **authorization code**  
+                """
+            )
+            st.code(auth_url)
+
+            auth_code = st.text_input(
+                "📋 Paste the authorization code here:",
+                type="password"
+            )
+
+            if not auth_code:
+                st.stop()
+
+            flow.fetch_token(code=auth_code)
+            creds = flow.credentials
+
+        # Save token
         with open(TOKEN_PATH, "w") as token:
             token.write(creds.to_json())
 
@@ -93,6 +101,8 @@ def google_login():
     calendar_service = build("calendar", "v3", credentials=creds)
 
     return gmail_service, calendar_service
+
+
 
 
 # ======================
