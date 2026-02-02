@@ -48,15 +48,17 @@ def save_memory(memory):
 def google_login():
     creds = None
 
-    # Load existing token
+    # 1️⃣ Load existing token
     if os.path.exists(TOKEN_PATH):
-        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+        creds = Credentials.from_authorized_user_file(
+            TOKEN_PATH, SCOPES
+        )
 
+    # 2️⃣ If no valid creds
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            # 🔐 Read OAuth config from Streamlit Secrets
             client_config = json.loads(
                 st.secrets["google"]["credentials"]
             )
@@ -66,24 +68,25 @@ def google_login():
                 SCOPES
             )
 
-            # ✅ CLOUD-SAFE: NO BROWSER REQUIRED
+            # 🌐 MANUAL AUTH (cloud-safe)
             auth_url, _ = flow.authorization_url(
                 prompt="consent"
             )
 
             st.warning("🔐 Google Authorization Required")
             st.markdown(
-                f"""
-                1. Open this URL in a **new browser tab**  
-                2. Login with Google  
-                3. Allow permissions  
-                4. Copy the **authorization code**  
+                """
+                **Steps:**
+                1. Open the URL below in a new tab  
+                2. Login & Allow access  
+                3. Copy the authorization code  
+                4. Paste it here 👇
                 """
             )
             st.code(auth_url)
 
             auth_code = st.text_input(
-                "📋 Paste the authorization code here:",
+                "📋 Paste authorization code:",
                 type="password"
             )
 
@@ -93,7 +96,7 @@ def google_login():
             flow.fetch_token(code=auth_code)
             creds = flow.credentials
 
-        # Save token
+        # 3️⃣ Save token
         with open(TOKEN_PATH, "w") as token:
             token.write(creds.to_json())
 
@@ -101,7 +104,6 @@ def google_login():
     calendar_service = build("calendar", "v3", credentials=creds)
 
     return gmail_service, calendar_service
-
 
 
 
