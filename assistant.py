@@ -27,9 +27,7 @@ TOKEN_PATH = os.path.join(BASE_DIR, "token.json")
 # GOOGLE LOGIN
 # ---------------
 def google_login():
-    import json
-    import os
-    import streamlit as st
+    import os, json, streamlit as st
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import InstalledAppFlow
     from google.auth.transport.requests import Request
@@ -40,7 +38,6 @@ def google_login():
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     TOKEN_PATH = os.path.join(BASE_DIR, "token.json")
 
-    # Session flags
     if "oauth_done" not in st.session_state:
         st.session_state.oauth_done = False
     if "auth_code" not in st.session_state:
@@ -48,17 +45,20 @@ def google_login():
 
     creds = None
 
-    # If token exists, use it
+    # Use existing token
     if os.path.exists(TOKEN_PATH):
         creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
         st.session_state.oauth_done = True
 
-    # If OAuth not done, show manual flow
     if not st.session_state.oauth_done:
-        client_config = json.loads(st.secrets["google"]["credentials"])
+        client_config = json.loads(
+            st.secrets["google"]["credentials"]
+        )
 
         flow = InstalledAppFlow.from_client_config(
-            client_config, SCOPES
+            client_config,
+            SCOPES,
+            redirect_uri="http://localhost"
         )
 
         auth_url, _ = flow.authorization_url(
@@ -67,10 +67,10 @@ def google_login():
         )
 
         st.warning("🔐 Google Login Required (one-time)")
-        st.markdown("### Step 1: Open this link in a new tab")
+        st.markdown("### Step 1: Open this link")
         st.code(auth_url)
 
-        st.markdown("### Step 2: Paste authorization code below")
+        st.markdown("### Step 2: Paste authorization code")
         st.session_state.auth_code = st.text_input(
             "Authorization code",
             value=st.session_state.auth_code,
@@ -87,7 +87,7 @@ def google_login():
             f.write(creds.to_json())
 
         st.session_state.oauth_done = True
-        st.success("✅ Login successful. Now click **Run Assistant** again.")
+        st.success("✅ Login successful. Click **Run Assistant** again.")
         st.stop()
 
     return build("gmail", "v1", credentials=creds)
