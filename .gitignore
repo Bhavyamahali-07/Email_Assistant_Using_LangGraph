@@ -1,6 +1,14 @@
+# Secrets
 credentials.json
-token.pickle
 token.json
-.env
-.ipynb_checkpoints/
+
+# Logs
+logs.txt
+
+# Python cache
 __pycache__/
+*.pyc
+
+# OS files
+.DS_Store
+Thumbs.db
