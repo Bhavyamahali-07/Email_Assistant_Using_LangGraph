@@ -1,5 +1,5 @@
 # =====================================================
-# AI EMAIL ASSISTANT – FINAL STREAMLIT SAFE VERSION
+# AI EMAIL ASSISTANT – FINAL STREAMLIT + GITHUB SAFE
 # =====================================================
 
 import os
@@ -7,8 +7,9 @@ import json
 import base64
 import re
 from datetime import datetime, timedelta, timezone
-
 from email.mime.text import MIMEText
+
+import streamlit as st
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -28,6 +29,12 @@ TIMEZONE = "Asia/Kolkata"
 MEMORY_FILE = "assistant_memory.json"
 
 # ======================
+# PATHS (🔥 IMPORTANT)
+# ======================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TOKEN_PATH = os.path.join(BASE_DIR, "token.json")
+
+# ======================
 # MEMORY
 # ======================
 def load_memory():
@@ -43,7 +50,7 @@ def save_memory(memory):
 
 
 # ======================
-# GOOGLE LOGIN (STREAMLIT SAFE)
+# GOOGLE LOGIN (STREAMLIT + CLOUD SAFE)
 # ======================
 def google_login():
     creds = None
@@ -59,6 +66,7 @@ def google_login():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
+            # Read OAuth config from Streamlit Secrets
             client_config = json.loads(
                 st.secrets["google"]["credentials"]
             )
@@ -68,7 +76,7 @@ def google_login():
                 SCOPES
             )
 
-            # 🌐 MANUAL AUTH (cloud-safe)
+            # 🌐 MANUAL AUTH (NO BROWSER NEEDED)
             auth_url, _ = flow.authorization_url(
                 prompt="consent"
             )
@@ -78,9 +86,10 @@ def google_login():
                 """
                 **Steps:**
                 1. Open the URL below in a new tab  
-                2. Login & Allow access  
-                3. Copy the authorization code  
-                4. Paste it here 👇
+                2. Login with Google  
+                3. Allow permissions  
+                4. Copy the authorization code  
+                5. Paste it below 👇
                 """
             )
             st.code(auth_url)
@@ -104,7 +113,6 @@ def google_login():
     calendar_service = build("calendar", "v3", credentials=creds)
 
     return gmail_service, calendar_service
-
 
 
 # ======================
@@ -223,7 +231,6 @@ def run_ai_email_assistant():
 
     for email in emails:
         meeting_dt = extract_datetime_from_email(email["body"])
-
         reply = "Could you please confirm the meeting date and time?"
 
         if meeting_dt:
@@ -257,7 +264,6 @@ Looking forward to our discussion.
 Best regards,
 Bhavya
 """
-
             else:
                 reply = (
                     "I currently have a scheduling conflict at the proposed time. "
@@ -272,3 +278,5 @@ Bhavya
         )
 
     save_memory(memory)
+
+    return "✅ AI Email Assistant completed successfully"
