@@ -45,28 +45,54 @@ def save_memory(memory):
 # ======================
 # GOOGLE LOGIN (STREAMLIT SAFE)
 # ======================
+import os
+import json
+import streamlit as st
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/calendar"
+]
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TOKEN_PATH = os.path.join(BASE_DIR, "token.json")
+
+
 def google_login():
     creds = None
 
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    # 1️⃣ Load existing token
+    if os.path.exists(TOKEN_PATH):
+        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
 
+    # 2️⃣ If token invalid / not exists
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                "credentials.json", SCOPES
+            # ✅ IMPORTANT: NO credentials.json FILE USED
+            client_config = json.loads(
+                st.secrets["google"]["credentials"]
             )
-            # 👇 Local browser auth (works locally)
+
+            flow = InstalledAppFlow.from_client_config(
+                client_config,
+                SCOPES
+            )
             creds = flow.run_local_server(port=0)
 
-        with open("token.json", "w") as token:
+        # 3️⃣ Save token
+        with open(TOKEN_PATH, "w") as token:
             token.write(creds.to_json())
 
-    gmail = build("gmail", "v1", credentials=creds)
-    calendar = build("calendar", "v3", credentials=creds)
-    return gmail, calendar
+    gmail_service = build("gmail", "v1", credentials=creds)
+    calendar_service = build("calendar", "v3", credentials=creds)
+
+    return gmail_service, calendar_service
 
 
 # ======================
