@@ -1,19 +1,15 @@
 # =====================================================
-# AI EMAIL ASSISTANT – STREAMLIT CLOUD READY
+# AI EMAIL ASSISTANT – STREAMLIT + TOKEN.JSON VERSION
 # =====================================================
 
 import os
 import json
 import base64
 import re
-import tempfile
 from datetime import datetime, timedelta
-
-import streamlit as st
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from email.mime.text import MIMEText
 
@@ -26,56 +22,27 @@ SCOPES = [
     "https://www.googleapis.com/auth/calendar"
 ]
 
-DEFAULT_DURATION_MINUTES = 60
 MEMORY_FILE = "assistant_memory.json"
+DEFAULT_DURATION_MINUTES = 30
 
 
 # ======================
-# MEMORY
-# ======================
-
-def load_memory():
-    if not os.path.exists(MEMORY_FILE):
-        return {"booked_slots": []}
-    with open(MEMORY_FILE, "r") as f:
-        return json.load(f)
-
-
-def save_memory(memory):
-    with open(MEMORY_FILE, "w") as f:
-        json.dump(memory, f, indent=2)
-
-
-def slot_key(dt):
-    return dt.strftime("%Y-%m-%d %H:%M")
-
-
-# ======================
-# GOOGLE LOGIN (🔥 FIXED)
+# GOOGLE LOGIN (TOKEN ONLY)
 # ======================
 
 def google_login():
-    creds = None
+    if not os.path.exists("token.json"):
+        raise RuntimeError(
+            "❌ token.json not found. "
+            "Run Google OAuth locally once to generate it."
+        )
 
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    creds = Credentials.from_authorized_user_file("token.json", SCOPES)
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            # 🔑 READ GOOGLE CREDS FROM STREAMLIT SECRETS
-            secrets_json = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
-
-            with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".json") as tmp:
-                json.dump(secrets_json, tmp)
-                tmp_path = tmp.name
-
-            flow = InstalledAppFlow.from_client_secrets_file(tmp_path, SCOPES)
-            creds = flow.run_console()
-
-            with open("token.json", "w") as token:
-                token.write(creds.to_json())
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        with open("token.json", "w") as f:
+            f.write(creds.to_json())
 
     gmail = build("gmail", "v1", credentials=creds)
     calendar = build("calendar", "v3", credentials=creds)
@@ -84,57 +51,74 @@ def google_login():
 
 
 # ======================
-# GMAIL HELPERS
+# MEMORY HELPERS
 # ======================
 
-def get_unread_human_emails(service, max_results=5):
-    results = service.users().messages().list(
+def load_memory():
+    if os.path.exists(MEMORY_FILE):
+        with open(MEMORY_FILE, "r") as f:
+            return json.load(f)
+    return {"booked_slots": []}
+
+
+def save_memory(memory):
+    with open(MEMORY_FILE, "w") as f:
+        json.dump(memory, f, indent=2)
+
+
+# ======================
+# EMAIL HELPERS
+# ======================
+
+def get_unread_emails(gmail, max_results=5):
+    results = gmail.users().messages().list(
         userId="me",
         labelIds=["UNREAD"],
         maxResults=max_results
     ).execute()
 
-    messages = results.get("messages", [])
-    emails = []
-
-    for msg in messages:
-        msg_data = service.users().messages().get(
-            userId="me", id=msg["id"], format="full"
-        ).execute()
-
-        headers = msg_data["payload"]["headers"]
-        subject = sender = ""
-
-        for h in headers:
-            if h["name"] == "Subject":
-                subject = h["value"]
-            if h["name"] == "From":
-                sender = h["value"]
-
-        parts = msg_data["payload"].get("parts", [])
-        body = ""
-
-        if parts:
-            data = parts[0]["body"].get("data")
-            if data:
-                body = base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
-
-        emails.append({
-            "id": msg["id"],
-            "sender": sender,
-            "subject": subject,
-            "body": body
-        })
-
-    return emails
+    return results.get("messages", [])
 
 
-def create_gmail_draft(gmail, to_email, subject, body):
+def get_email_content(gmail, msg_id):
+    msg = gmail.users().messages().get(
+        userId="me",
+        id=msg_id,
+        format="full"
+    ).execute()
+
+    headers = msg["payload"].get("headers", [])
+    subject = sender = ""
+
+    for h in headers:
+        if h["name"] == "Subject":
+            subject = h["value"]
+        if h["name"] == "From":
+            sender = h["value"]
+
+    body = ""
+    parts = msg["payload"].get("parts", [])
+    for p in parts:
+        if p.get("mimeType") == "text/plain":
+            body = base64.urlsafe_b64decode(
+                p["body"]["data"]
+            ).decode("utf-8")
+
+    return {
+        "id": msg_id,
+        "subject": subject,
+        "sender": sender,
+        "body": body
+    }
+
+
+def create_draft(gmail, to, subject, body):
     message = MIMEText(body)
-    message["to"] = to_email
+    message["to"] = to
     message["subject"] = subject
 
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+
     gmail.users().drafts().create(
         userId="me",
         body={"message": {"raw": raw}}
@@ -145,61 +129,41 @@ def create_gmail_draft(gmail, to_email, subject, body):
 # CALENDAR HELPERS
 # ======================
 
-def check_calendar_availability(calendar, start_dt):
-    end_dt = start_dt + timedelta(minutes=DEFAULT_DURATION_MINUTES)
+def create_calendar_event(calendar, summary, start_dt, duration_minutes=30):
+    end_dt = start_dt + timedelta(minutes=duration_minutes)
 
-    events = calendar.events().list(
-        calendarId="primary",
-        timeMin=start_dt.isoformat() + "Z",
-        timeMax=end_dt.isoformat() + "Z",
-        singleEvents=True
-    ).execute()
+    event = {
+        "summary": summary,
+        "start": {
+            "dateTime": start_dt.isoformat(),
+            "timeZone": "Asia/Kolkata",
+        },
+        "end": {
+            "dateTime": end_dt.isoformat(),
+            "timeZone": "Asia/Kolkata",
+        },
+    }
 
-    return len(events.get("items", [])) == 0
-
-
-def create_calendar_event(calendar, event):
     calendar.events().insert(
         calendarId="primary",
-        body={
-            "summary": event["summary"],
-            "start": {
-                "dateTime": event["start"],
-                "timeZone": "Asia/Kolkata"
-            },
-            "end": {
-                "dateTime": event["end"],
-                "timeZone": "Asia/Kolkata"
-            }
-        }
+        body=event
     ).execute()
 
 
-def find_alternative_slots(calendar, start_dt, count=3):
-    slots = []
-    dt = start_dt + timedelta(hours=1)
-
-    while len(slots) < count:
-        if check_calendar_availability(calendar, dt):
-            slots.append(dt.strftime("%B %d, %Y at %I:%M %p"))
-        dt += timedelta(hours=1)
-
-    return slots
-
-
 # ======================
-# DATE EXTRACTION
+# DATE PARSER (SIMPLE)
 # ======================
 
-def extract_datetime_from_email(text):
-    pattern = r"(\d{1,2} \w+ \d{4}).*?(\d{1,2}:\d{2})"
-    match = re.search(pattern, text)
-
+def extract_meeting_datetime(text):
+    match = re.search(
+        r"(\d{1,2})[/-](\d{1,2})[/-](\d{4}).*?(\d{1,2}):(\d{2})",
+        text
+    )
     if not match:
         return None
 
-    date_str, time_str = match.groups()
-    return datetime.strptime(f"{date_str} {time_str}", "%d %B %Y %H:%M")
+    day, month, year, hour, minute = map(int, match.groups())
+    return datetime(year, month, day, hour, minute)
 
 
 # ======================
@@ -210,47 +174,39 @@ def run_ai_email_assistant():
     gmail, calendar = google_login()
     memory = load_memory()
 
-    emails = get_unread_human_emails(gmail)
+    messages = get_unread_emails(gmail)
 
-    for email in emails:
-        meeting_dt = extract_datetime_from_email(email["body"])
-        reply = "Could you please confirm the meeting date and time?"
+    for m in messages:
+        email = get_email_content(gmail, m["id"])
+        meeting_dt = extract_meeting_datetime(email["body"])
 
         if meeting_dt:
-            key = slot_key(meeting_dt)
+            create_calendar_event(
+                calendar,
+                email["subject"] or "Meeting",
+                meeting_dt,
+                DEFAULT_DURATION_MINUTES
+            )
 
-            if key in memory["booked_slots"]:
-                free = False
-            else:
-                free = check_calendar_availability(calendar, meeting_dt)
+            reply = (
+                f"Hi,\n\n"
+                f"I've scheduled the meeting on "
+                f"{meeting_dt.strftime('%d %b %Y at %I:%M %p')}.\n\n"
+                f"Thanks!"
+            )
+        else:
+            reply = (
+                "Hi,\n\n"
+                "Thanks for your email. "
+                "I will get back to you shortly.\n\n"
+                "Regards"
+            )
 
-            if free:
-                event = {
-                    "summary": email["subject"] or "Meeting",
-                    "start": meeting_dt.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "end": (meeting_dt + timedelta(minutes=DEFAULT_DURATION_MINUTES))
-                    .strftime("%Y-%m-%dT%H:%M:%S")
-                }
-
-                create_calendar_event(calendar, event)
-                memory["booked_slots"].append(key)
-                save_memory(memory)
-
-                reply = (
-                    f"Thank you. I have added the meeting to my calendar for "
-                    f"{meeting_dt.strftime('%B %d, %Y at %I:%M %p')}."
-                )
-            else:
-                alternatives = find_alternative_slots(calendar, meeting_dt)
-                reply = (
-                    "I have a scheduling conflict at the proposed time.\n\n"
-                    "Would any of these alternatives work?\n"
-                    + "\n".join(f"• {s}" for s in alternatives)
-                )
-
-        create_gmail_draft(
+        create_draft(
             gmail,
             email["sender"],
             "Re: " + email["subject"],
             reply
         )
+
+    save_memory(memory)
