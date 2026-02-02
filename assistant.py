@@ -27,21 +27,35 @@ TOKEN_PATH = os.path.join(BASE_DIR, "token.json")
 # GOOGLE LOGIN
 # ---------------
 def google_login():
+    import json
+    import os
+    import streamlit as st
+    from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from google.auth.transport.requests import Request
+    from googleapiclient.discovery import build
+
+    SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    TOKEN_PATH = os.path.join(BASE_DIR, "token.json")
+
+    # Session flags
     if "oauth_done" not in st.session_state:
         st.session_state.oauth_done = False
+    if "auth_code" not in st.session_state:
+        st.session_state.auth_code = ""
 
     creds = None
 
-    # If token already exists, just use it
+    # If token exists, use it
     if os.path.exists(TOKEN_PATH):
         creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
         st.session_state.oauth_done = True
 
-    # If OAuth not done yet, start manual flow
+    # If OAuth not done, show manual flow
     if not st.session_state.oauth_done:
-        client_config = json.loads(
-            st.secrets["google"]["credentials"]
-        )
+        client_config = json.loads(st.secrets["google"]["credentials"])
 
         flow = InstalledAppFlow.from_client_config(
             client_config, SCOPES
@@ -53,37 +67,32 @@ def google_login():
         )
 
         st.warning("🔐 Google Login Required (one-time)")
-        st.markdown("### Step 1: Open this link")
+        st.markdown("### Step 1: Open this link in a new tab")
         st.code(auth_url)
 
-        if "auth_code" not in st.session_state:
-            st.session_state.auth_code = ""
-
-        st.markdown("### Step 2: Paste authorization code")
+        st.markdown("### Step 2: Paste authorization code below")
         st.session_state.auth_code = st.text_input(
             "Authorization code",
             value=st.session_state.auth_code,
             type="password"
         )
 
-        if st.session_state.auth_code:
-            flow.fetch_token(code=st.session_state.auth_code)
-            creds = flow.credentials
-
-            with open(TOKEN_PATH, "w") as token:
-                token.write(creds.to_json())
-
-            st.session_state.oauth_done = True
-            st.success("✅ Google login successful. Please click **Run Assistant** again.")
+        if not st.session_state.auth_code:
             st.stop()
 
-        else:
-            st.stop()
+        flow.fetch_token(code=st.session_state.auth_code)
+        creds = flow.credentials
 
-    # Build Gmail service
+        with open(TOKEN_PATH, "w") as f:
+            f.write(creds.to_json())
+
+        st.session_state.oauth_done = True
+        st.success("✅ Login successful. Now click **Run Assistant** again.")
+        st.stop()
+
     return build("gmail", "v1", credentials=creds)
 
-
+       
 # ----------------
 # FETCH EMAILS
 # ----------------
