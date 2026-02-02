@@ -29,7 +29,7 @@ TIMEZONE = "Asia/Kolkata"
 MEMORY_FILE = "assistant_memory.json"
 
 # ======================
-# PATHS (🔥 IMPORTANT)
+# PATHS
 # ======================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TOKEN_PATH = os.path.join(BASE_DIR, "token.json")
@@ -50,48 +50,29 @@ def save_memory(memory):
 
 
 # ======================
-# GOOGLE LOGIN (STREAMLIT + CLOUD SAFE)
+# GOOGLE LOGIN (CLOUD SAFE)
 # ======================
 def google_login():
     creds = None
 
-    # 1️⃣ Load existing token
     if os.path.exists(TOKEN_PATH):
-        creds = Credentials.from_authorized_user_file(
-            TOKEN_PATH, SCOPES
-        )
+        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
 
-    # 2️⃣ If no valid creds
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            # Read OAuth config from Streamlit Secrets
             client_config = json.loads(
                 st.secrets["google"]["credentials"]
             )
 
             flow = InstalledAppFlow.from_client_config(
-                client_config,
-                SCOPES
+                client_config, SCOPES
             )
 
-            # 🌐 MANUAL AUTH (NO BROWSER NEEDED)
-            auth_url, _ = flow.authorization_url(
-                prompt="consent"
-            )
+            auth_url, _ = flow.authorization_url(prompt="consent")
 
             st.warning("🔐 Google Authorization Required")
-            st.markdown(
-                """
-                **Steps:**
-                1. Open the URL below in a new tab  
-                2. Login with Google  
-                3. Allow permissions  
-                4. Copy the authorization code  
-                5. Paste it below 👇
-                """
-            )
             st.code(auth_url)
 
             auth_code = st.text_input(
@@ -105,19 +86,23 @@ def google_login():
             flow.fetch_token(code=auth_code)
             creds = flow.credentials
 
-        # 3️⃣ Save token
         with open(TOKEN_PATH, "w") as token:
             token.write(creds.to_json())
 
-    gmail_service = build("gmail", "v1", credentials=creds)
-    calendar_service = build("calendar", "v3", credentials=creds)
+    gmail = build("gmail", "v1", credentials=creds)
+    calendar = build("calendar", "v3", credentials=creds)
 
-    return gmail_service, calendar_service
+    return gmail, calendar
 
 
 # ======================
-# EMAIL HELPERS
+# EMAIL HELPERS (🔥 FIXED)
 # ======================
+def extract_email_address(sender):
+    match = re.search(r"<(.+?)>", sender)
+    return match.group(1) if match else sender
+
+
 def get_unread_emails(service, max_results=5):
     results = service.users().messages().list(
         userId="me", labelIds=["UNREAD"], maxResults=max_results
@@ -131,21 +116,33 @@ def get_unread_emails(service, max_results=5):
             userId="me", id=msg["id"], format="full"
         ).execute()
 
-        headers = {h["name"]: h["value"] for h in data["payload"]["headers"]}
+        headers = {
+            h["name"].lower(): h["value"]
+            for h in data["payload"]["headers"]
+        }
+
+        payload = data["payload"]
         body = ""
 
-        parts = data["payload"].get("parts", [])
-        for part in parts:
-            if part["mimeType"] == "text/plain":
+        # ✅ Single-part email
+        if "data" in payload.get("body", {}):
+            body = base64.urlsafe_b64decode(
+                payload["body"]["data"]
+            ).decode("utf-8", errors="ignore")
+
+        # ✅ Multi-part email
+        for part in payload.get("parts", []):
+            if part.get("mimeType") == "text/plain" and "data" in part["body"]:
                 body = base64.urlsafe_b64decode(
                     part["body"]["data"]
                 ).decode("utf-8", errors="ignore")
+                break
 
         emails.append({
             "id": msg["id"],
-            "sender": headers.get("From", ""),
-            "subject": headers.get("Subject", ""),
-            "body": body
+            "sender": headers.get("from", ""),
+            "subject": headers.get("subject", "(No Subject)"),
+            "body": body.strip()
         })
 
     return emails
@@ -228,6 +225,7 @@ def run_ai_email_assistant():
     gmail, calendar = google_login()
 
     emails = get_unread_emails(gmail)
+    results = []
 
     for email in emails:
         meeting_dt = extract_datetime_from_email(email["body"])
@@ -235,17 +233,14 @@ def run_ai_email_assistant():
 
         if meeting_dt:
             key = slot_key(meeting_dt)
-
-            if key in memory["booked_slots"]:
-                free = False
-            else:
-                free = check_calendar_availability(calendar, meeting_dt)
+            free = key not in memory["booked_slots"] and \
+                   check_calendar_availability(calendar, meeting_dt)
 
             if free:
                 create_calendar_event(
                     calendar,
                     meeting_dt,
-                    email["subject"] or "Meeting"
+                    email["subject"]
                 )
 
                 memory["booked_slots"].append(key)
@@ -266,17 +261,24 @@ Bhavya
 """
             else:
                 reply = (
-                    "I currently have a scheduling conflict at the proposed time. "
-                    "Could you please suggest an alternative slot?"
+                    "I currently have a scheduling conflict. "
+                    "Please suggest another time."
                 )
+
+        to_email = extract_email_address(email["sender"])
 
         create_gmail_draft(
             gmail,
-            email["sender"],
+            to_email,
             "Re: " + email["subject"],
             reply.strip()
         )
 
-    save_memory(memory)
+        results.append({
+            "from": email["sender"],
+            "subject": email["subject"],
+            "draft": True
+        })
 
-    return "✅ AI Email Assistant completed successfully"
+    save_memory(memory)
+    return results
