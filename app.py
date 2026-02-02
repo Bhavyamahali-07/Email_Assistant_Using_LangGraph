@@ -83,15 +83,14 @@ with left:
             try:
                 result = run_ai_email_assistant()
 
-                # result is expected as a dict (safe even if None)
-                if isinstance(result, dict):
-                    st.session_state.stats["emails_processed"] += result.get("emails", 0)
-                    st.session_state.stats["drafts_created"] += result.get("drafts", 0)
-                    st.session_state.stats["events_created"] += result.get("events", 0)
+                # Update stats
+                st.session_state.stats["emails_processed"] += result.get("emails", 0)
+                st.session_state.stats["drafts_created"] += result.get("drafts", 0)
+                st.session_state.stats["events_created"] += result.get("events", 0)
 
-                    # Logs
-                    for log in result.get("logs", []):
-                        st.session_state.logs.append(log)
+                # Append logs
+                for log in result.get("logs", []):
+                    st.session_state.logs.append(log)
 
                 st.success("✅ Assistant run completed successfully")
 
